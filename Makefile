@@ -1,6 +1,6 @@
 SHELL := bash
 
-.PHONY: lint test test-all dist bump test-release release clean-dist clean
+.PHONY: lint test metrics test-all dist bump test-release release clean-dist clean
 
 VENV_EXE=python3 -m virtualenv
 VENV=.venv
@@ -17,6 +17,9 @@ lint: $(VENV)
 
 test: $(VENV)
 	$(VENV_ACTIVATE); python tests/test.py
+
+metrics: $(VENV)
+	$(VENV_ACTIVATE); python tests/metricas.py
 
 test-all: $(VENV)
 	$(VENV_ACTIVATE); tox
