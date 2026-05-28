@@ -1,4 +1,5 @@
 import os
+import random
 import sys
 import time
 import tracemalloc
@@ -12,15 +13,6 @@ from rubik.cube import Cube
 from rubik.solve import Solver
 from rubik.optimize import optimize_moves
 
-
-CUBOS_VALIDOS = [
-    "DLURRDFFUBBLDDRBRBLDLRBFRUULFBDDUFBRBBRFUDFLUDLUULFLFR",
-    "GGBYOBWBBBOYRGYOYOGWROWYWGWRBRGYBGOOGBBYOYORWWRRGRWRYW",
-    "BYOYYRGOWRROWGOYWGBBGOROBWGWORBBWRWYRGYBGYWOGBROYGBWYR",
-    "YWYYGWWGYBBYRRBRGWOOOYWRWRBOBYROWRGOBGRWOGWBBGBGOYYGRO",
-    "ROORRYOWBWWGBYGRRBYBGGGGWWOYYBRBOWBYRWOGBYORYBOWYOGRGW",
-]
-
 CUBOS_IMPOSIBLES = [
     "ORWOWGWYWGBGRGRBOBOWYGGBRRBYBRGOWOYGRYRBBGOOBYOYRYWYWW",
     "UUUUUUUUULLLFFFRRRBBBLLLFBFRRRBFBLLLFFFRRRBBBDDDDDDDDD",
@@ -30,6 +22,22 @@ CUBOS_IMPOSIBLES = [
 ]
 
 REPETICIONES = max(1, int(os.getenv("RUBIK_METRICAS_REPETICIONES", "1")))
+NUMERO_CUBOS_VALIDOS = max(1, int(os.getenv("RUBIK_METRICAS_CUBOS_VALIDOS", "5")))
+SEMILLA_METRICAS = int(os.getenv("RUBIK_METRICAS_SEED", "12345"))
+MOVES = ["L", "R", "U", "D", "F", "B", "M", "E", "S"]
+SOLVED_CUBE_STR = "OOOOOOOOOYYYWWWGGGBBBYYYWWWGGGBBBYYYWWWGGGBBBRRRRRRRRR"
+
+
+def generar_cubo_valido_aleatorio(aleatorio):
+    cubo = Cube(SOLVED_CUBE_STR)
+    scramble_moves = " ".join(aleatorio.choices(MOVES, k=200))
+    cubo.sequence(scramble_moves)
+    return cubo.flat_str()
+
+
+def generar_cubos_validos(cantidad=NUMERO_CUBOS_VALIDOS, semilla=SEMILLA_METRICAS):
+    aleatorio = random.Random(semilla)
+    return [generar_cubo_valido_aleatorio(aleatorio) for _ in range(cantidad)]
 
 
 def medir_lote(aplicar_optimizacion=False):
@@ -37,9 +45,10 @@ def medir_lote(aplicar_optimizacion=False):
     total_cubos = 0
     peor_pico_bytes = 0
     tiempo_total = 0.0
+    cubos_validos = generar_cubos_validos()
 
     for _ in range(REPETICIONES):
-        for texto_cubo in CUBOS_VALIDOS:
+        for texto_cubo in cubos_validos:
             cubo = Cube(texto_cubo)
             solucionador = Solver(cubo)
 
@@ -70,7 +79,7 @@ def medir_lote(aplicar_optimizacion=False):
     return {
         "tiempo_total": tiempo_total,
         "tiempo_promedio": tiempo_total / total_cubos,
-        "memoria_pico_mb": peor_pico_bytes / (1024.0 * 1024.0),
+        "memoria_pico_kib": peor_pico_bytes / 1024.0,
         "movimientos_totales": total_movimientos,
         "cubos": total_cubos,
     }
@@ -92,15 +101,16 @@ def validar_cubos_imposibles():
 def imprimir_reporte(nombre, metricas):
     print(f"{nombre}:")
     print(f"  Cubos procesados: {metricas['cubos']}")
-    print(f"  Tiempo total: {metricas['tiempo_total']:.6f} s")
-    print(f"  Tiempo promedio por cubo: {metricas['tiempo_promedio']:.6f} s")
-    print(f"  Pico de memoria: {metricas['memoria_pico_mb']:.6f} MB")
+    print(f"  Tiempo total: {metricas['tiempo_total'] * 1_000:.1f} milisegundos")
+    print(f"  Tiempo promedio por cubo: {metricas['tiempo_promedio'] * 1_000:.1f} milisegundos")
+    print(f"  Pico de memoria: {metricas['memoria_pico_kib']:.1f} KiB")
     print(f"  Movimientos totales: {metricas['movimientos_totales']}")
 
 
 def main():
     print("Metricas del solucionador Rubik")
     print(f"Repeticiones por conjunto: {REPETICIONES}")
+    print(f"Semilla de cubos validos: {SEMILLA_METRICAS}")
 
     actual = medir_lote(aplicar_optimizacion=False)
     optimizado = medir_lote(aplicar_optimizacion=True)
@@ -111,8 +121,8 @@ def main():
     print()
     print("Comparacion:")
     print(f"  Ahorro de movimientos: {actual['movimientos_totales'] - optimizado['movimientos_totales']}")
-    print(f"  Diferencia de tiempo total: {optimizado['tiempo_total'] - actual['tiempo_total']:.6f} s")
-    print(f"  Diferencia de memoria pico: {optimizado['memoria_pico_mb'] - actual['memoria_pico_mb']:.6f} MB")
+    print(f"  Diferencia de tiempo total: {(optimizado['tiempo_total'] - actual['tiempo_total']) * 1_000:.1f} milisegundos")
+    print(f"  Diferencia de memoria pico: {optimizado['memoria_pico_kib'] - actual['memoria_pico_kib']:.1f} KiB")
     print()
     validar_cubos_imposibles()
     print()
