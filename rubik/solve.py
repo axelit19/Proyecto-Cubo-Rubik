@@ -1,507 +1,293 @@
+"""Solucionador del cubo de Rubik.
+
+La optimización principal de este archivo está en `_bfs()`: en lugar de
+probar secuencias largas sobre el cubo completo, se resuelve cada pieza por
+fases usando una búsqueda en anchura (BFS) sobre un estado ligero. Ese estado
+solo guarda la posición y los colores de las piezas relevantes, lo que reduce
+el costo de explorar movimientos y evita recalcular todo el cubo en cada paso.
+"""
+
+from collections import deque
+from typing import Any
+
 from rubik import cube
 from rubik.maths import Point
 
 DEBUG = False
 
+FACE_MOVES = (
+    "U", "Ui", "R", "Ri", "F", "Fi",
+    "L", "Li", "D", "Di", "B", "Bi",
+)
+
+INVERSE_MOVE = {
+    "U": "Ui", "Ui": "U",
+    "R": "Ri", "Ri": "R",
+    "F": "Fi", "Fi": "F",
+    "L": "Li", "Li": "L",
+    "D": "Di", "Di": "D",
+    "B": "Bi", "Bi": "B",
+}
+
+MOVE_TABLE = {
+    "L": ("x", -1, cube.ROT_YZ_CC),
+    "Li": ("x", -1, cube.ROT_YZ_CW),
+    "R": ("x", 1, cube.ROT_YZ_CW),
+    "Ri": ("x", 1, cube.ROT_YZ_CC),
+    "U": ("y", 1, cube.ROT_XZ_CW),
+    "Ui": ("y", 1, cube.ROT_XZ_CC),
+    "D": ("y", -1, cube.ROT_XZ_CC),
+    "Di": ("y", -1, cube.ROT_XZ_CW),
+    "F": ("z", 1, cube.ROT_XY_CW),
+    "Fi": ("z", 1, cube.ROT_XY_CC),
+    "B": ("z", -1, cube.ROT_XY_CC),
+    "Bi": ("z", -1, cube.ROT_XY_CW),
+}
+
 
 class Solver:
+
+    # El solver trabaja por fases: primero fija la cruz, luego esquinas,
+    # aristas del medio y finalmente las piezas de la cara opuesta.
+    # En cada fase se llama a BFS sobre un subconjunto pequeño del estado,
+    # lo que permite encontrar secuencias cortas sin explorar movimientos
+    # innecesarios para todo el cubo.
 
     def __init__(self, c):
         self.cube = c
         self.colors = c.colors()
         self.moves = []
-
-        self.left_piece  = self.cube.find_piece(self.cube.left_color())
-        self.right_piece = self.cube.find_piece(self.cube.right_color())
-        self.up_piece    = self.cube.find_piece(self.cube.up_color())
-        self.down_piece  = self.cube.find_piece(self.cube.down_color())
-
-        self.inifinite_loop_max_iterations = 12
+        self.color_to_axis = {
+            self.cube.left_color(): cube.LEFT,
+            self.cube.right_color(): cube.RIGHT,
+            self.cube.up_color(): cube.UP,
+            self.cube.down_color(): cube.DOWN,
+            self.cube.front_color(): cube.FRONT,
+            self.cube.back_color(): cube.BACK,
+        }
 
     def solve(self):
-        if DEBUG: print(self.cube)
-        self.cross()
-        if DEBUG: print('Cross:\n', self.cube)
-        self.cross_corners()
-        if DEBUG: print('Corners:\n', self.cube)
-        self.second_layer()
-        if DEBUG: print('Second layer:\n', self.cube)
-        self.back_face_edges()
-        if DEBUG: print('Last layer edges\n', self.cube)
-        self.last_layer_corners_position()
-        if DEBUG: print('Last layer corners -- position\n', self.cube)
-        self.last_layer_corners_orientation()
-        if DEBUG: print('Last layer corners -- orientation\n', self.cube)
-        self.last_layer_edges()
-        if DEBUG: print('Solved\n', self.cube)
+        if DEBUG:
+            print(self.cube)
+
+        protected = []
+        for signature in self._cross_signatures():
+            self._solve_piece(protected, signature, max_depth=self._phase_max_depth(0))
+            protected.append(signature)
+
+        for signature in self._front_corner_signatures():
+            self._solve_piece(protected, signature, max_depth=self._phase_max_depth(1))
+            protected.append(signature)
+
+        for signature in self._middle_edge_signatures():
+            self._solve_piece(protected, signature, max_depth=self._phase_max_depth(2))
+            protected.append(signature)
+
+        for signature in self._back_edge_signatures():
+            self._solve_piece(protected, signature, max_depth=self._phase_max_depth(3))
+            protected.append(signature)
+
+        for signature in self._back_corner_signatures():
+            self._solve_piece(protected, signature, max_depth=self._phase_max_depth(4))
+            protected.append(signature)
+
+        if DEBUG:
+            print("Solved\n", self.cube)
 
     def move(self, move_str):
         self.moves.extend(move_str.split())
         self.cube.sequence(move_str)
 
-    def cross(self):
-        if DEBUG: print("cross")
-        # place the UP-LEFT piece
-        fl_piece = self.cube.find_piece(self.cube.front_color(), self.cube.left_color())
-        fr_piece = self.cube.find_piece(self.cube.front_color(), self.cube.right_color())
-        fu_piece = self.cube.find_piece(self.cube.front_color(), self.cube.up_color())
-        fd_piece = self.cube.find_piece(self.cube.front_color(), self.cube.down_color())
+    def _phase_max_depth(self, phase_index):
+        return (8, 10, 12, 12, 14)[phase_index]
 
-        self._cross_left_or_right(fl_piece, self.left_piece, self.cube.left_color(), "L L", "E L Ei Li")
-        self._cross_left_or_right(fr_piece, self.right_piece, self.cube.right_color(), "R R", "Ei R E Ri")
+    def _cross_signatures(self):
+        return [
+            tuple(sorted((self.cube.front_color(), self.cube.left_color()))),
+            tuple(sorted((self.cube.front_color(), self.cube.right_color()))),
+            tuple(sorted((self.cube.front_color(), self.cube.up_color()))),
+            tuple(sorted((self.cube.front_color(), self.cube.down_color()))),
+        ]
 
-        self.move("Z")
-        self._cross_left_or_right(fd_piece, self.down_piece, self.cube.left_color(), "L L", "E L Ei Li")
-        self._cross_left_or_right(fu_piece, self.up_piece, self.cube.right_color(), "R R", "Ei R E Ri")
-        self.move("Zi")
+    def _front_corner_signatures(self):
+        return [
+            tuple(sorted((self.cube.front_color(), self.cube.left_color(), self.cube.down_color()))),
+            tuple(sorted((self.cube.front_color(), self.cube.left_color(), self.cube.up_color()))),
+            tuple(sorted((self.cube.front_color(), self.cube.right_color(), self.cube.down_color()))),
+            tuple(sorted((self.cube.front_color(), self.cube.right_color(), self.cube.up_color()))),
+        ]
 
-    def _cross_left_or_right(self, edge_piece, face_piece, face_color, move_1, move_2):
-        # don't do anything if piece is in correct place
-        if (edge_piece.pos == (face_piece.pos.x, face_piece.pos.y, 1)
-                and edge_piece.colors[2] == self.cube.front_color()):
-            return
+    def _middle_edge_signatures(self):
+        return [
+            tuple(sorted((self.cube.left_color(), self.cube.down_color()))),
+            tuple(sorted((self.cube.left_color(), self.cube.up_color()))),
+            tuple(sorted((self.cube.right_color(), self.cube.down_color()))),
+            tuple(sorted((self.cube.right_color(), self.cube.up_color()))),
+        ]
 
-        # ensure piece is at z = -1
-        undo_move = None
-        if edge_piece.pos.z == 0:
-            pos = Point(edge_piece.pos)
-            pos.x = 0  # pick the UP or DOWN face
-            cw, cc = cube.get_rot_from_face(pos)
+    def _back_edge_signatures(self):
+        return [
+            tuple(sorted((self.cube.back_color(), self.cube.left_color()))),
+            tuple(sorted((self.cube.back_color(), self.cube.up_color()))),
+            tuple(sorted((self.cube.back_color(), self.cube.right_color()))),
+            tuple(sorted((self.cube.back_color(), self.cube.down_color()))),
+        ]
 
-            if edge_piece.pos in (cube.LEFT + cube.UP, cube.RIGHT + cube.DOWN):
-                self.move(cw)
-                undo_move = cc
+    def _back_corner_signatures(self):
+        return [
+            tuple(sorted((self.cube.back_color(), self.cube.left_color(), self.cube.down_color()))),
+            tuple(sorted((self.cube.back_color(), self.cube.left_color(), self.cube.up_color()))),
+            tuple(sorted((self.cube.back_color(), self.cube.right_color(), self.cube.down_color()))),
+            tuple(sorted((self.cube.back_color(), self.cube.right_color(), self.cube.up_color()))),
+        ]
+
+    def _solve_piece(self, protected_signatures, target_signature, max_depth):
+        # Aquí se prepara el problema que resolverá BFS: se congelan las piezas
+        # ya protegidas y la pieza objetivo, y después se busca la secuencia
+        # mínima dentro de ese espacio reducido.
+        tracked_signatures = list(protected_signatures) + [target_signature]
+        goal_state = []
+        for signature in tracked_signatures:
+            if signature == target_signature:
+                # store goal as lightweight key (pos tuple, colors tuple)
+                p = self._goal_piece(signature)
+                goal_state.append((tuple(p.pos), tuple(p.colors)))
             else:
-                self.move(cc)
-                undo_move = cw
-        elif edge_piece.pos.z == 1:
-            pos = Point(edge_piece.pos)
-            pos.z = 0
-            cw, cc = cube.get_rot_from_face(pos)
-            self.move("{0} {0}".format(cc))
-            # don't set the undo move if the piece starts out in the right position
-            # (with wrong orientation) or we'll screw up the remainder of the algorithm
-            if edge_piece.pos.x != face_piece.pos.x:
-                undo_move = "{0} {0}".format(cw)
+                p = self.cube.find_piece(*signature)
+                goal_state.append((tuple(p.pos), tuple(p.colors)))
 
-        assert edge_piece.pos.z == -1
+        start_state = self._snapshot_state(tracked_signatures)
+        sequence = self._bfs(start_state, goal_state, tracked_signatures, max_depth)
+        if sequence is None:
+            raise Exception("Stuck in loop - unsolvable cube\n" + str(self.cube))
 
-        # piece is at z = -1, rotate to correct face (LEFT or RIGHT)
-        count = 0
-        while (edge_piece.pos.x, edge_piece.pos.y) != (face_piece.pos.x, face_piece.pos.y):
-            self.move("B")
-            count += 1
-            if count >= self.inifinite_loop_max_iterations:
-                raise Exception("Stuck in loop - unsolvable cube?\n" + str(self.cube))
+        self.move(" ".join(sequence))
 
-        # if we moved a correctly-placed piece, restore it
-        if undo_move:
-            self.move(undo_move)
+    def _bfs(self, start_state, goal_state, tracked_signatures, max_depth):
+        # BFS explora primero las secuencias más cortas, así que sirve para
+        # encontrar soluciones eficientes por fase. Además, trabajamos con un
+        # estado ligero: ((x, y, z), (c0, c1, c2)) por pieza rastreada.
+        start_key = self._state_key(start_state)
+        goal_key = self._state_key(goal_state)
+        if start_key == goal_key:
+            return []
 
-        # the piece is on the correct face on plane z = -1, but has two orientations
-        if edge_piece.colors[0] == face_color:
-            self.move(move_1)
-        else:
-            self.move(move_2)
+        queue: deque[tuple[Any, list[str], Any, str | None, str | None]] = deque(
+            [(start_state, [], start_key, None, None)]
+        )
+        seen = {start_key}
 
-    def cross_corners(self):
-        if DEBUG: print("cross_corners")
-        fld_piece = self.cube.find_piece(self.cube.front_color(), self.cube.left_color(), self.cube.down_color())
-        flu_piece = self.cube.find_piece(self.cube.front_color(), self.cube.left_color(), self.cube.up_color())
-        frd_piece = self.cube.find_piece(self.cube.front_color(), self.cube.right_color(), self.cube.down_color())
-        fru_piece = self.cube.find_piece(self.cube.front_color(), self.cube.right_color(), self.cube.up_color())
+        while queue:
+            state, sequence, state_key, last_move, previous_move = queue.popleft()
+            if state_key == goal_key:
+                return sequence
 
-        self.place_frd_corner(frd_piece, self.right_piece, self.down_piece, self.cube.front_color())
-        self.move("Z")
-        self.place_frd_corner(fru_piece, self.up_piece, self.right_piece, self.cube.front_color())
-        self.move("Z")
-        self.place_frd_corner(flu_piece, self.left_piece, self.up_piece, self.cube.front_color())
-        self.move("Z")
-        self.place_frd_corner(fld_piece, self.down_piece, self.left_piece, self.cube.front_color())
-        self.move("Z")
+            if len(sequence) >= max_depth:
+                continue
 
-    def place_frd_corner(self, corner_piece, right_piece, down_piece, front_color):
-        # rotate to z = -1
-        if corner_piece.pos.z == 1:
-            pos = Point(corner_piece.pos)
-            pos.x = pos.z = 0
-            cw, cc = cube.get_rot_from_face(pos)
+            for move in FACE_MOVES:
+                if last_move and INVERSE_MOVE[last_move] == move:
+                    continue
+                if (
+                    previous_move is not None
+                    and last_move is not None
+                    and previous_move[0] == last_move[0] == move[0]
+                ):
+                    continue
+                if not self._move_affects_state(state, move):
+                    continue
 
-            # be careful not to screw up other pieces on the front face
-            count = 0
-            undo_move = cc
-            while corner_piece.pos.z != -1:
-                self.move(cw)
-                count += 1
+                next_state = self._apply_move_to_state(state, move)
+                next_key = self._state_key(next_state)
+                if next_key in seen:
+                    continue
 
-            if count > 1:
-                # go the other direction because I don't know which is which.
-                # we need to do only one flip (net) or we'll move other
-                # correctly-placed corners out of place.
-                for _ in range(count):
-                    self.move(cc)
+                seen.add(next_key)
+                queue.append((next_state, sequence + [move], next_key, move, last_move))
 
-                count = 0
-                while corner_piece.pos.z != -1:
-                    self.move(cc)
-                    count += 1
-                undo_move = cw
-            self.move("B")
-            for _ in range(count):
-                self.move(undo_move)
+        return None
 
-        # rotate piece to be directly below its destination
-        while (corner_piece.pos.x, corner_piece.pos.y) != (right_piece.pos.x, down_piece.pos.y):
-            self.move("B")
+    def _snapshot_state(self, signatures):
+        # Genera la representación compacta que consume BFS.
+        result = []
+        for signature in signatures:
+            p = self.cube.find_piece(*signature)
+            result.append((tuple(p.pos), tuple(p.colors)))
+        return tuple(result)
 
-        # there are three possible orientations for a corner
-        if corner_piece.colors[0] == front_color:
-            self.move("B D Bi Di")
-        elif corner_piece.colors[1] == front_color:
-            self.move("Bi Ri B R")
-        else:
-            self.move("Ri B B R Bi Bi D Bi Di")
+    def _clone_piece(self, piece):
+        # Conservado por compatibilidad; devuelve la misma forma compacta.
+        return (tuple(piece.pos), tuple(piece.colors))
 
-    def second_layer(self):
-        rd_piece = self.cube.find_piece(self.cube.right_color(), self.cube.down_color())
-        ru_piece = self.cube.find_piece(self.cube.right_color(), self.cube.up_color())
-        ld_piece = self.cube.find_piece(self.cube.left_color(), self.cube.down_color())
-        lu_piece = self.cube.find_piece(self.cube.left_color(), self.cube.up_color())
+    def _state_key(self, state):
+        # Si el estado ya está compactado, se usa directamente como llave.
+        try:
+            first = state[0]
+        except Exception:
+            return tuple(state)
+        # Detecta si las entradas ya son (pos_tuple, colors_tuple).
+        if isinstance(first, tuple) and len(first) == 2 and isinstance(first[0], tuple):
+            return tuple(state)
+        # En otro caso, se asume que contiene objetos tipo Piece.
+        return tuple((tuple(piece.pos), tuple(piece.colors)) for piece in state)
 
-        self.place_middle_layer_ld_edge(ld_piece, self.cube.left_color(), self.cube.down_color())
-        self.move("Z")
-        self.place_middle_layer_ld_edge(rd_piece, self.cube.left_color(), self.cube.down_color())
-        self.move("Z")
-        self.place_middle_layer_ld_edge(ru_piece, self.cube.left_color(), self.cube.down_color())
-        self.move("Z")
-        self.place_middle_layer_ld_edge(lu_piece, self.cube.left_color(), self.cube.down_color())
-        self.move("Z")
+    def _move_affects_state(self, state, move):
+        axis_name, axis_value, _ = MOVE_TABLE[move]
+        # Si ningún elemento del estado queda sobre la cara afectada, ese
+        # movimiento no cambia la fase actual y se puede podar.
+        axis_index = {'x': 0, 'y': 1, 'z': 2}[axis_name]
+        for pos, colors in state:
+            if pos[axis_index] == axis_value:
+                return True
+        return False
 
-    def place_middle_layer_ld_edge(self, ld_piece, left_color, down_color):
-        # move to z == -1
-        if ld_piece.pos.z == 0:
-            count = 0
-            while (ld_piece.pos.x, ld_piece.pos.y) != (-1, -1):
-                self.move("Z")
-                count += 1
-
-            self.move("B L Bi Li Bi Di B D")
-            for _ in range(count):
-                self.move("Zi")
-
-        assert ld_piece.pos.z == -1
-
-        if ld_piece.colors[2] == left_color:
-            # left_color is on the back face, move piece to to down face
-            while ld_piece.pos.y != -1:
-                self.move("B")
-            self.move("B L Bi Li Bi Di B D")
-        elif ld_piece.colors[2] == down_color:
-            # down_color is on the back face, move to left face
-            while ld_piece.pos.x != -1:
-                self.move("B")
-            self.move("Bi Di B D B L Bi Li")
-        else:
-            raise Exception("BUG!!")
-
-    def back_face_edges(self):
-        # rotate BACK to FRONT
-        self.move("X X")
-
-        # States:  1     2     3     4
-        #         -B-   -B-   ---   ---
-        #         BBB   BB-   BBB   -B-
-        #         -B-   ---   ---   ---
-        def state1():
-            return (self.cube[0, 1, 1].colors[2] == self.cube.front_color() and
-                    self.cube[-1, 0, 1].colors[2] == self.cube.front_color() and
-                    self.cube[0, -1, 1].colors[2] == self.cube.front_color() and
-                    self.cube[1, 0, 1].colors[2] == self.cube.front_color())
-
-        def state2():
-            return (self.cube[0, 1, 1].colors[2] == self.cube.front_color() and
-                    self.cube[-1, 0, 1].colors[2] == self.cube.front_color())
-
-        def state3():
-            return (self.cube[-1, 0, 1].colors[2] == self.cube.front_color() and
-                    self.cube[1, 0, 1].colors[2] == self.cube.front_color())
-
-        def state4():
-            return (self.cube[0, 1, 1].colors[2] != self.cube.front_color() and
-                    self.cube[-1, 0, 1].colors[2] != self.cube.front_color() and
-                    self.cube[0, -1, 1].colors[2] != self.cube.front_color() and
-                    self.cube[1, 0, 1].colors[2] != self.cube.front_color())
-
-        count = 0
-        while not state1():
-            if state4() or state2():
-                self.move("D F R Fi Ri Di")
-            elif state3():
-                self.move("D R F Ri Fi Di")
-            else:
-                self.move("F")
-            count += 1
-            if count >= self.inifinite_loop_max_iterations:
-                raise Exception("Stuck in loop - unsolvable cube\n" + str(self.cube))
-
-        self.move("Xi Xi")
-
-    def last_layer_corners_position(self):
-        self.move("X X")
-        # UP face:
-        #  4-3
-        #  ---
-        #  2-1
-        move_1 = "Li Fi L D F Di Li F L F F "  # swaps 1 and 2
-        move_2 = "F Li Fi L D F Di Li F L F "  # swaps 1 and 3
-
-        c1 = self.cube.find_piece(self.cube.front_color(), self.cube.right_color(), self.cube.down_color())
-        c2 = self.cube.find_piece(self.cube.front_color(), self.cube.left_color(), self.cube.down_color())
-        c3 = self.cube.find_piece(self.cube.front_color(), self.cube.right_color(), self.cube.up_color())
-        c4 = self.cube.find_piece(self.cube.front_color(), self.cube.left_color(), self.cube.up_color())
-
-        # place corner 4
-        if c4.pos == Point(1, -1, 1):
-            self.move(move_1 + "Zi " + move_1 + " Z")
-        elif c4.pos == Point(1, 1, 1):
-            self.move("Z " + move_2 + " Zi")
-        elif c4.pos == Point(-1, -1, 1):
-            self.move("Zi " + move_1 + " Z")
-        assert c4.pos == Point(-1, 1, 1)
-
-        # place corner 2
-        if c2.pos == Point(1, 1, 1):
-            self.move(move_2 + move_1)
-        elif c2.pos == Point(1, -1, 1):
-            self.move(move_1)
-        assert c2.pos == Point(-1, -1, 1)
-
-        # place corner 3 and corner 1
-        if c3.pos == Point(1, -1, 1):
-            self.move(move_2)
-        assert c3.pos == Point(1, 1, 1)
-        assert c1.pos == Point(1, -1, 1)
-
-        self.move("Xi Xi")
-
-    def last_layer_corners_orientation(self):
-        self.move("X X")
-
-        # States:  1        2      3      4      5      6      7      8
-        #           B      B             B      B        B
-        #         BB-      -B-B   BBB    -BB    -BB   B-B-   B-B-B   BBB
-        #         BBB      BBB    BBB    BBB    BBB    BBB    BBB    BBB
-        #         -B-B     BB-    -B-    -BB    BB-B  B-B-   B-B-B   BBB
-        #         B          B    B B    B               B
-        def state1():
-            return (self.cube[ 1,  1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[-1, -1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[ 1, -1, 1].colors[0] == self.cube.front_color())
-
-        def state2():
-            return (self.cube[-1,  1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[ 1,  1, 1].colors[0] == self.cube.front_color() and
-                    self.cube[ 1, -1, 1].colors[1] == self.cube.front_color())
-
-        def state3():
-            return (self.cube[-1, -1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[ 1, -1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[-1,  1, 1].colors[2] == self.cube.front_color() and
-                    self.cube[ 1,  1, 1].colors[2] == self.cube.front_color())
-
-        def state4():
-            return (self.cube[-1,  1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[-1, -1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[ 1,  1, 1].colors[2] == self.cube.front_color() and
-                    self.cube[ 1, -1, 1].colors[2] == self.cube.front_color())
-
-        def state5():
-            return (self.cube[-1,  1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[ 1, -1, 1].colors[0] == self.cube.front_color())
-
-        def state6():
-            return (self.cube[ 1,  1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[ 1, -1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[-1, -1, 1].colors[0] == self.cube.front_color() and
-                    self.cube[-1,  1, 1].colors[0] == self.cube.front_color())
-
-        def state7():
-            return (self.cube[ 1,  1, 1].colors[0] == self.cube.front_color() and
-                    self.cube[ 1, -1, 1].colors[0] == self.cube.front_color() and
-                    self.cube[-1, -1, 1].colors[0] == self.cube.front_color() and
-                    self.cube[-1,  1, 1].colors[0] == self.cube.front_color())
-
-        def state8():
-            return (self.cube[ 1,  1, 1].colors[2] == self.cube.front_color() and
-                    self.cube[ 1, -1, 1].colors[2] == self.cube.front_color() and
-                    self.cube[-1, -1, 1].colors[2] == self.cube.front_color() and
-                    self.cube[-1,  1, 1].colors[2] == self.cube.front_color())
-
-        move_1 = "Ri Fi R Fi Ri F F R F F "
-        move_2 = "R F Ri F R F F Ri F F "
-
-        count = 0
-        while not state8():
-            if state1(): self.move(move_1)
-            elif state2(): self.move(move_2)
-            elif state3(): self.move(move_2 + "F F " + move_1)
-            elif state4(): self.move(move_2 + move_1)
-            elif state5(): self.move(move_1 + "F " + move_2)
-            elif state6(): self.move(move_1 + "Fi " + move_1)
-            elif state7(): self.move(move_1 + "F F " + move_1)
-            else:
-                self.move("F")
-
-            count += 1
-            if count >= self.inifinite_loop_max_iterations:
-                raise Exception("Stuck in loop - unsolvable cube:\n" + str(self.cube))
-
-        # rotate corners into correct locations (cube is inverted, so swap up and down colors)
-        bru_corner = self.cube.find_piece(self.cube.front_color(), self.cube.right_color(), self.cube.up_color())
-        while bru_corner.pos != Point(1, 1, 1):
-            self.move("F")
-
-        self.move("Xi Xi")
-
-    def last_layer_edges(self):
-        self.move("X X")
-
-        br_edge = self.cube.find_piece(self.cube.front_color(), self.cube.right_color())
-        bl_edge = self.cube.find_piece(self.cube.front_color(), self.cube.left_color())
-        bu_edge = self.cube.find_piece(self.cube.front_color(), self.cube.up_color())
-        bd_edge = self.cube.find_piece(self.cube.front_color(), self.cube.down_color())
-
-        # States:
-        #       1              2
-        #      ---            ---
-        #      ---            ---
-        #      -B-            -a-
-        #  --- B-B ---    aaa BBB ---
-        #  --B -B- B--    aaB -B- B--
-        #  --- B-B ---    aaa B-B ---
-        #      -B-            -B-
-        #      ---            ---
-        #      ---            ---
-        #              (aB edge on any FRONT)
-        def state1():
-            return (bu_edge.colors[2] != self.cube.front_color() and
-                    bd_edge.colors[2] != self.cube.front_color() and
-                    bl_edge.colors[2] != self.cube.front_color() and
-                    br_edge.colors[2] != self.cube.front_color())
-
-        def state2():
-            return (bu_edge.colors[2] == self.cube.front_color() or
-                    bd_edge.colors[2] == self.cube.front_color() or
-                    bl_edge.colors[2] == self.cube.front_color() or
-                    br_edge.colors[2] == self.cube.front_color())
-
-
-        cycle_move = "R R F D Ui R R Di U F R R"
-        h_pattern_move = "Ri S Ri Ri S S Ri Fi Fi R Si Si Ri Ri Si R Fi Fi "
-        fish_move = "Di Li " + h_pattern_move + " L D"
-
-        if state1():
-            # ideally, convert state1 into state2
-            self._handle_last_layer_state1(br_edge, bl_edge, bu_edge, bd_edge, cycle_move, h_pattern_move)
-        if state2():
-            self._handle_last_layer_state2(br_edge, bl_edge, bu_edge, bd_edge, cycle_move)
-
-        def h_pattern1():
-            return (self.cube[-1,  0, 1].colors[0] != self.cube.left_color() and
-                    self.cube[ 1,  0, 1].colors[0] != self.cube.right_color() and
-                    self.cube[ 0, -1, 1].colors[1] == self.cube.down_color() and
-                    self.cube[ 0,  1, 1].colors[1] == self.cube.up_color())
-
-        def h_pattern2():
-            return (self.cube[-1,  0, 1].colors[0] == self.cube.left_color() and
-                    self.cube[ 1,  0, 1].colors[0] == self.cube.right_color() and
-                    self.cube[ 0, -1, 1].colors[1] == self.cube.front_color() and
-                    self.cube[ 0,  1, 1].colors[1] == self.cube.front_color())
-
-        def fish_pattern():
-            return (self.cube[cube.FRONT + cube.DOWN].colors[2] == self.cube.down_color() and
-                    self.cube[cube.FRONT + cube.RIGHT].colors[2] == self.cube.right_color() and
-                    self.cube[cube.FRONT + cube.DOWN].colors[1] == self.cube.front_color() and
-                    self.cube[cube.FRONT + cube.RIGHT].colors[0] == self.cube.front_color())
-
-        count = 0
-        while not self.cube.is_solved():
-            for _ in range(4):
-                if fish_pattern():
-                    self.move(fish_move)
-                    if self.cube.is_solved():
-                        return
+    def _apply_move_to_state(self, state, move):
+        # Aplica el movimiento sobre el estado compacto, sin mover todo el cubo.
+        axis_name, axis_value, matrix = MOVE_TABLE[move]
+        axis_index = {'x': 0, 'y': 1, 'z': 2}[axis_name]
+        next_state = []
+        for pos_tuple, colors in state:
+            before = Point(pos_tuple)
+            if pos_tuple[axis_index] == axis_value:
+                after = matrix * before
+                # compute rot vector
+                rot = after - before
+                if not any(rot):
+                    next_state.append((tuple(after), colors))
+                    continue
+                if rot.count(0) == 2:
+                    rot = Point(rot.x + (matrix * rot).x,
+                                rot.y + (matrix * rot).y,
+                                rot.z + (matrix * rot).z)
+                # find indices to swap
+                idxs = [i for i, v in enumerate(rot) if v != 0]
+                if len(idxs) == 1:
+                    # should not happen, but keep colors same
+                    next_colors = colors
                 else:
-                    self.move("Z")
-
-            if h_pattern1():
-                self.move(h_pattern_move)
-            elif h_pattern2():
-                self.move("Z " + h_pattern_move + "Zi")
+                    i, j = idxs[0], idxs[1]
+                    lst = list(colors)
+                    lst[i], lst[j] = lst[j], lst[i]
+                    next_colors = tuple(lst)
+                next_state.append((tuple(after), next_colors))
             else:
-                self.move(cycle_move)
-            count += 1
-            if count >= self.inifinite_loop_max_iterations:
-                raise Exception("Stuck in loop - unsolvable cube:\n" + str(self.cube))
+                next_state.append((pos_tuple, colors))
+        return tuple(next_state)
 
-        self.move("Xi Xi")
+    def _goal_piece(self, signature):
+        target_pos = Point(0, 0, 0)
+        for color in signature:
+            target_pos += self.color_to_axis[color]
 
+        expected_colors = [None, None, None]
+        if target_pos.x != 0:
+            expected_colors[0] = self.cube.right_color() if target_pos.x > 0 else self.cube.left_color()
+        if target_pos.y != 0:
+            expected_colors[1] = self.cube.up_color() if target_pos.y > 0 else self.cube.down_color()
+        if target_pos.z != 0:
+            expected_colors[2] = self.cube.front_color() if target_pos.z > 0 else self.cube.back_color()
 
-    def _handle_last_layer_state1(self, br_edge, bl_edge, bu_edge, bd_edge, cycle_move, h_move):
-        if DEBUG: print("_handle_last_layer_state1")
-        def check_edge_lr():
-            return self.cube[cube.LEFT + cube.FRONT].colors[2] == self.cube.left_color()
-
-        count = 0
-        while not check_edge_lr():
-            self.move("F")
-            count += 1
-            if count == 4:
-                raise Exception("Bug: Failed to handle last layer state1")
-
-        self.move(h_move)
-
-        for _ in range(count):
-            self.move("Fi")
-
-
-    def _handle_last_layer_state2(self, br_edge, bl_edge, bu_edge, bd_edge, cycle_move):
-        if DEBUG: print("_handle_last_layer_state2")
-        def correct_edge():
-            piece = self.cube[cube.LEFT + cube.FRONT]
-            if piece.colors[2] == self.cube.front_color() and piece.colors[0] == self.cube.left_color():
-                return piece
-            piece = self.cube[cube.RIGHT + cube.FRONT]
-            if piece.colors[2] == self.cube.front_color() and piece.colors[0] == self.cube.right_color():
-                return piece
-            piece = self.cube[cube.UP + cube.FRONT]
-            if piece.colors[2] == self.cube.front_color() and piece.colors[1] == self.cube.up_color():
-                return piece
-            piece = self.cube[cube.DOWN + cube.FRONT]
-            if piece.colors[2] == self.cube.front_color() and piece.colors[1] == self.cube.down_color():
-                return piece
-
-        count = 0
-        while True:
-            edge = correct_edge()
-            if edge is None:
-                self.move(cycle_move)
-            else:
-                break
-
-            count += 1
-
-            if count % 3 == 0:
-                self.move("Z")
-
-            if count >= self.inifinite_loop_max_iterations:
-                raise Exception("Stuck in loop - unsolvable cube:\n" + str(self.cube))
-
-        while edge.pos != Point(-1, 0, 1):
-            self.move("Z")
-
-        assert self.cube[cube.LEFT + cube.FRONT].colors[2] == self.cube.front_color() and \
-               self.cube[cube.LEFT + cube.FRONT].colors[0] == self.cube.left_color()
+        return cube.Piece(pos=target_pos, colors=expected_colors)
 
 
 if __name__ == '__main__':
