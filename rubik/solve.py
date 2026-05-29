@@ -15,7 +15,22 @@ CUBOS_IMPOSIBLES_TEST = [
 
 class Solver:
 
-    def __init__(self, c):
+    # El solver trabaja por fases: primero fija la cruz, luego esquinas,
+    # aristas del medio y finalmente las piezas de la cara opuesta.
+    # En cada fase se llama a BFS sobre un subconjunto pequeño del estado,
+    # lo que permite encontrar secuencias cortas sin explorar movimientos
+    # innecesarios para todo el cubo.
+
+    def __init__(self, c, use_kociemba: bool = True, bfs_max_nodes: Optional[int] = None, bfs_node_cap: Optional[int] = None):
+        """Inicializa el Solver.
+
+        Parámetros opcionales:
+        - use_kociemba: si True, se usará kociemba como respaldo cuando BFS se
+          quede sin presupuesto. Por defecto es True para que el solver no se
+          quede atascado.
+        - bfs_max_nodes, bfs_node_cap: permiten ajustar el presupuesto de nodos
+          explorables por instancia.
+        """
         self.cube = c
         self.colors = c.colors()
         self.moves = []

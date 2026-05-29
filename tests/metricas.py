@@ -10,7 +10,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from rubik.cube import Cube
-from rubik.solve import Solver
+from rubik.solve import Solver as BfsSolver
+from rubik.solve_baseline import Solver as BaselineSolver
 from rubik.optimize import optimize_moves
 
 CUBOS_IMPOSIBLES = [
@@ -21,6 +22,7 @@ CUBOS_IMPOSIBLES = [
     "UUUUUUUUULLLFFFRRRBBBLLFLFFRRRBBBLLLFFFRRRBBBDDDDDDDDD",
 ]
 
+# Número de repeticiones por defecto: usar 1 para ejecutar cada cubo una vez (5 cubos total)
 REPETICIONES = max(1, int(os.getenv("RUBIK_METRICAS_REPETICIONES", "1")))
 NUMERO_CUBOS_VALIDOS = max(1, int(os.getenv("RUBIK_METRICAS_CUBOS_VALIDOS", "5")))
 SEMILLA_METRICAS = int(os.getenv("RUBIK_METRICAS_SEED", "12345"))
@@ -40,7 +42,7 @@ def generar_cubos_validos(cantidad=NUMERO_CUBOS_VALIDOS, semilla=SEMILLA_METRICA
     return [generar_cubo_valido_aleatorio(aleatorio) for _ in range(cantidad)]
 
 
-def medir_lote(aplicar_optimizacion=False):
+def medir_lote(solver_cls, aplicar_optimizacion=False):
     total_movimientos = 0
     total_cubos = 0
     peor_pico_bytes = 0
@@ -50,7 +52,7 @@ def medir_lote(aplicar_optimizacion=False):
     for _ in range(REPETICIONES):
         for texto_cubo in cubos_validos:
             cubo = Cube(texto_cubo)
-            solucionador = Solver(cubo)
+            solucionador = solver_cls(cubo)
 
             tracemalloc.start()
             inicio = time.perf_counter()
@@ -85,10 +87,10 @@ def medir_lote(aplicar_optimizacion=False):
     }
 
 
-def validar_cubos_imposibles():
+def validar_cubos_imposibles(solver_cls):
     for texto_cubo in CUBOS_IMPOSIBLES:
         cubo = Cube(texto_cubo)
-        solucionador = Solver(cubo)
+        solucionador = solver_cls(cubo)
         try:
             solucionador.solve()
         except Exception as error:
@@ -107,18 +109,24 @@ def imprimir_reporte(nombre, metricas):
     print(f"  Movimientos totales: {metricas['movimientos_totales']}")
 
 
+def medir_y_reportar(nombre, solver_cls, aplicar_optimizacion=False):
+    print(f"Iniciando {nombre}...")
+    metricas = medir_lote(solver_cls, aplicar_optimizacion=aplicar_optimizacion)
+    imprimir_reporte(nombre, metricas)
+    print(f"Terminado {nombre}")
+    print()
+    return metricas
+
+
 def main():
     print("Metricas del solucionador Rubik")
     print(f"Repeticiones por conjunto: {REPETICIONES}")
     print(f"Semilla de cubos validos: {SEMILLA_METRICAS}")
 
-    actual = medir_lote(aplicar_optimizacion=False)
-    optimizado = medir_lote(aplicar_optimizacion=True)
+    base = medir_y_reportar("Version base", BaselineSolver, aplicar_optimizacion=False)
+    base_optimizada = medir_y_reportar("Version base optimizada", BaselineSolver, aplicar_optimizacion=True)
+    bfs = medir_y_reportar("Version BFS", BfsSolver, aplicar_optimizacion=False)
 
-    imprimir_reporte("Version actual", actual)
-    print()
-    imprimir_reporte("Version con optimizacion", optimizado)
-    print()
     print("Comparacion:")
     print(f"  Ahorro de movimientos: {actual['movimientos_totales'] - optimizado['movimientos_totales']}")
     print(f"  Diferencia de tiempo total: {(optimizado['tiempo_total'] - actual['tiempo_total']) * 1_000:.1f} milisegundos")
@@ -126,9 +134,15 @@ def main():
     print()
     validar_cubos_imposibles()
     print()
-    print("Correctitud:")
-    print("  Los cubos validos se resuelven correctamente.")
-    print("  Los cubos imposibles siguen detectandose como imposibles.")
+    if VALIDAR_IMPOSIBLES:
+        validar_cubos_imposibles(BfsSolver)
+        print()
+        print("Correctitud:")
+        print("  Los cubos validos se resuelven correctamente.")
+        print("  Los cubos imposibles siguen detectandose como imposibles.")
+    else:
+        print("Correctitud:")
+        print("  Validacion de cubos imposibles omitida para una corrida rapida.")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,9 @@ setup_params = dict(
     description="A basic, pure-Python Rubik's cube solver",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    install_requires=[],
+    install_requires=[
+        "kociemba>=1.2.1",
+    ],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Environment :: Console",
