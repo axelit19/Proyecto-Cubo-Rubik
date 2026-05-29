@@ -15,6 +15,15 @@ from rubik.maths import Point
 
 DEBUG = False
 
+# Límites para la búsqueda: número máximo de nodos a explorar por invocación
+# de BFS. Aumentados por defecto para permitir búsquedas más profundas sin
+# recurrir al solucionador externo. Si el usuario necesita más control, puede
+# crear el Solver con parámetros personalizados (`bfs_max_nodes`,
+# `bfs_node_cap`).
+BFS_MAX_NODES = 50000
+# Límite absoluto de nodos por pieza (tope superior)
+BFS_NODE_CAP = 200000
+
 FACE_MOVES = (
     "U", "Ui", "R", "Ri", "F", "Fi",
     "L", "Li", "D", "Di", "B", "Bi",
@@ -53,10 +62,25 @@ class Solver:
     # lo que permite encontrar secuencias cortas sin explorar movimientos
     # innecesarios para todo el cubo.
 
-    def __init__(self, c):
+    def __init__(self, c, use_kociemba: bool = True, bfs_max_nodes: int | None = None, bfs_node_cap: int | None = None):
+        """Inicializa el Solver.
+
+        Parámetros opcionales:
+        - use_kociemba: si True, se usará kociemba como respaldo cuando BFS se
+          quede sin presupuesto. Por defecto es True para que el solver no se
+          quede atascado.
+        - bfs_max_nodes, bfs_node_cap: permiten ajustar el presupuesto de nodos
+          explorables por instancia.
+        """
         self.cube = c
         self.colors = c.colors()
         self.moves = []
+
+        # configuración por instancia (sobrescribe constantes globales si se pasa)
+        self.use_kociemba = bool(use_kociemba)
+        self.bfs_max_nodes = int(bfs_max_nodes) if bfs_max_nodes is not None else BFS_MAX_NODES
+        self.bfs_node_cap = int(bfs_node_cap) if bfs_node_cap is not None else BFS_NODE_CAP
+
         self.color_to_axis = {
             self.cube.left_color(): cube.LEFT,
             self.cube.right_color(): cube.RIGHT,
@@ -157,13 +181,35 @@ class Solver:
                 goal_state.append((tuple(p.pos), tuple(p.colors)))
 
         start_state = self._snapshot_state(tracked_signatures)
-        sequence = self._bfs(start_state, goal_state, tracked_signatures, max_depth)
+        # Intentamos con búsqueda en anchura limitada. Si falla, hacemos
+        # una pequeña estrategia de búsqueda iterativa (aumentando la
+        # profundidad y el número de nodos explorados) antes de rendirnos.
+
+        sequence = None
+        max_nodes = self.bfs_max_nodes
+        # Intentar con profundidades ligeramente mayores, pero con un número
+        # reducido de reintentos para no bloquear la ejecución.
+        for extra_depth in range(0, 3):
+            depth = max_depth + extra_depth
+            # no sobrepasar el tope absoluto
+            budget = min(max_nodes, self.bfs_node_cap)
+            sequence = self._bfs(start_state, goal_state, tracked_signatures, depth, budget)
+            if sequence is not None:
+                break
+            # aumentar el presupuesto de nodos para la siguiente iteración
+            max_nodes = min(max_nodes * 2, self.bfs_node_cap)
+
         if sequence is None:
+            if self.use_kociemba:
+                if DEBUG:
+                    print(f"[solver] BFS se atascó en {target_signature}; activando kociemba...")
+                self._solve_with_kociemba(Exception("Stuck in loop - unsolvable cube\n" + str(self.cube)))
+                return
             raise Exception("Stuck in loop - unsolvable cube\n" + str(self.cube))
 
         self.move(" ".join(sequence))
 
-    def _bfs(self, start_state, goal_state, tracked_signatures, max_depth):
+    def _bfs(self, start_state, goal_state, tracked_signatures, max_depth, max_nodes: int = BFS_MAX_NODES):
         # BFS explora primero las secuencias más cortas, así que sirve para
         # encontrar soluciones eficientes por fase. Además, trabajamos con un
         # estado ligero: ((x, y, z), (c0, c1, c2)) por pieza rastreada.
@@ -176,9 +222,13 @@ class Solver:
             [(start_state, [], start_key, None, None)]
         )
         seen = {start_key}
+        nodes_expanded = 0
 
         while queue:
             state, sequence, state_key, last_move, previous_move = queue.popleft()
+            nodes_expanded += 1
+            if nodes_expanded > max_nodes:
+                return None
             if state_key == goal_key:
                 return sequence
 
@@ -288,6 +338,21 @@ class Solver:
             expected_colors[2] = self.cube.front_color() if target_pos.z > 0 else self.cube.back_color()
 
         return cube.Piece(pos=target_pos, colors=expected_colors)
+
+    def _solve_with_kociemba(self, original_error=None):
+        from rubik._kociemba import solve_cube
+
+        try:
+            if DEBUG:
+                print("[solver] resolviendo con kociemba...")
+            moves = solve_cube(self.cube)
+        except Exception:
+            if original_error is not None:
+                raise original_error
+            raise
+        if moves:
+            self.move(" ".join(moves))
+
 
 
 if __name__ == '__main__':
