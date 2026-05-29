@@ -8,7 +8,7 @@ el costo de explorar movimientos y evita recalcular todo el cubo en cada paso.
 """
 
 from collections import deque
-from typing import Any
+from typing import Any, Optional
 
 from rubik import cube
 from rubik.maths import Point
@@ -62,7 +62,7 @@ class Solver:
     # lo que permite encontrar secuencias cortas sin explorar movimientos
     # innecesarios para todo el cubo.
 
-    def __init__(self, c, use_kociemba: bool = True, bfs_max_nodes: int | None = None, bfs_node_cap: int | None = None):
+    def __init__(self, c, use_kociemba: bool = True, bfs_max_nodes: Optional[int] = None, bfs_node_cap: Optional[int] = None):
         """Inicializa el Solver.
 
         Parámetros opcionales:
