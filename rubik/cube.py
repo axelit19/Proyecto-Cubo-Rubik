@@ -245,13 +245,42 @@ class Cube:
     def Z(self):  self._rotate_pieces(self.pieces, ROT_XY_CW)
     def Zi(self): self._rotate_pieces(self.pieces, ROT_XY_CC)
 
-    def sequence(self, move_str):
-        """
-        :param moves: A string containing notated moves separated by spaces: "L Ri U M Ui B M"
-        """
-        moves = [getattr(self, name) for name in move_str.split()]
+
+    MOVE_MAP = {
+        "R": lambda c: c.R(),
+        "Ri": lambda c: c.Ri(),
+        "L": lambda c: c.L(),
+        "Li": lambda c: c.Li(),
+        "U": lambda c: c.U(),
+        "Ui": lambda c: c.Ui(),
+        "D": lambda c: c.D(),
+        "Di": lambda c: c.Di(),
+        "F": lambda c: c.F(),
+        "Fi": lambda c: c.Fi(),
+        "B": lambda c: c.B(),
+        "Bi": lambda c: c.Bi(),
+        "M": lambda c: c.M(),
+        "Mi": lambda c: c.Mi(),
+        "E": lambda c: c.E(),
+        "Ei": lambda c: c.Ei(),
+        "S": lambda c: c.S(),
+        "Si": lambda c: c.Si(),
+        "X": lambda c: c.X(),
+        "Xi": lambda c: c.Xi(),
+        "Y": lambda c: c.Y(),
+        "Yi": lambda c: c.Yi(),
+        "Z": lambda c: c.Z(),
+        "Zi": lambda c: c.Zi(),
+    }
+
+   
+    def sequence(self, moves):
+        if isinstance(moves, str):
+            moves = moves.split()
+        move_map = Cube.MOVE_MAP
         for move in moves:
-            move()
+            move_map[move](self)
+
 
     def find_piece(self, *colors):
         if None in colors:
@@ -308,6 +337,8 @@ class Cube:
 
     def flat_str(self):
         return "".join(x for x in str(self) if x not in string.whitespace)
+    
+    
 
     def __str__(self):
         template = ("    {}{}{}\n"

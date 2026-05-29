@@ -67,7 +67,7 @@ def medir_lote(aplicar_optimizacion=False):
 
             if aplicar_optimizacion:
                 verificacion = Cube(texto_cubo)
-                verificacion.sequence(" ".join(movimientos))
+                verificacion.sequence(movimientos)
                 if not verificacion.is_solved():
                     raise AssertionError("La secuencia optimizada no resuelve el cubo")
 

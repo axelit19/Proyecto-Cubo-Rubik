@@ -2,6 +2,8 @@
 class Point:
     """A 3D point/vector"""
 
+    __slots__ = ("x", "y", "z")
+
     def __init__(self, x, y=None, z=None):
         """Construct a Point from an (x, y, z) tuple or an iterable"""
         try:
@@ -79,6 +81,8 @@ class Point:
 
     def __ne__(self, other):
         return not (self == other)
+    
+
 
 
 class Matrix:

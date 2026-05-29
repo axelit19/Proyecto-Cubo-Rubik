@@ -718,7 +718,7 @@ class TestOptimize(unittest.TestCase):
             self.assertEqual(expected, actual)
 
             c, d = Cube(solved_cube_str), Cube(solved_cube_str)
-            c.sequence(" ".join(moves))
+            c.sequence(moves)
             d.sequence(" ".join(actual))
             self.assertEqual(str(c), str(d))
 
@@ -729,8 +729,8 @@ class TestOptimize(unittest.TestCase):
             self.assertEqual(expected, actual)
 
             c, d = Cube(solved_cube_str), Cube(solved_cube_str)
-            c.sequence(" ".join(moves))
-            d.sequence(" ".join(actual))
+            c.sequence(moves)
+            d.sequence(actual)
             self.assertEqual(str(c), str(d))
 
 
